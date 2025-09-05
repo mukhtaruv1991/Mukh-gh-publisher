@@ -17,5 +17,5 @@
 لتثبيت الأداة وجعلها متاحة من أي مكان في Termux، انسخ الأمر التالي والصقه في الطرفية:
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/mukhtaruv1991/gh-publisher/main/install.sh)
+bash <(curl -sL https://raw.githubusercontent.com/mukhtaruv1991/Mukh-gh-publisher/main/install.sh)
  
