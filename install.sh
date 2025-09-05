@@ -7,7 +7,7 @@ echo "🚀 Installing gh-publish tool..."
 # --- 1. Define GitHub source and local target ---
 # استبدل 'mukhtaruv1991' باسم المستخدم الخاص بك إذا تغير
 GITHUB_USER="mukhtaruv1991"
-GITHUB_REPO="gh-publisher"
+GITHUB_REPO="Mukh-pgh-publisher"
 BASE_URL="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/main"
 TARGET_DIR="$HOME/bin"
 
