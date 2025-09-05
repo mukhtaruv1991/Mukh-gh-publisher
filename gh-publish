@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-# --- gh-publish: The Multi-Mode Auto-Publisher (v11.0) ---
+# --- gh-publish: The Multi-Mode Auto-Publisher (v11.1 - Options Fix) ---
 
 # --- Configuration & Global Variables ---
 CONFIG_FILE="$HOME/.gh-publish.conf"
@@ -14,6 +14,22 @@ _log_info() { echo "ℹ️ $1"; }
 _log_success() { echo "✅ $1"; }
 _log_rocket() { echo "🚀 $1"; }
 
+# --- Help Message Function ---
+show_help() {
+  echo "gh-publish: The Multi-Mode Auto-Publisher (v11.1)"
+  echo "Automates publishing projects to GitHub from Termux."
+  echo ""
+  echo "USAGE:"
+  echo "  gh-publish [OPTION | PROJECT_NAME]"
+  echo ""
+  echo "MODES & OPTIONS:"
+  echo "  (no arguments)   Publishes the project in the current directory."
+  echo "  <PROJECT_NAME>   Finds a project by name in standard locations and publishes it."
+  echo "  --from-path      Starts interactive mode to publish from a specific path."
+  echo "  --setup          Configures your GitHub Personal Access Token."
+  echo "  -h, --help       Displays this help message."
+}
+
 # --- Setup Function ---
 setup_token() {
   _log_info "--- GitHub Personal Access Token Setup ---"
@@ -24,126 +40,77 @@ setup_token() {
 }
 
 # --- Core Publishing Logic (The Engine) ---
-# This function takes a directory path and publishes it.
-# It's the heart of the tool, called by all modes.
 run_publish_engine() {
   local project_dir="$1"
   cd "$project_dir" || _log_error "Could not navigate to project directory '$project_dir'."
-  
   _log_rocket "Starting publish process for '$(basename "$project_dir")'..."
-
-  # --- UPDATE OR PUBLISH LOGIC ---
   if [ -d ".git" ] && git remote -v | grep -q "origin.*push"; then
-      # --- UPDATE MODE ---
       _log_info "Project already published. Switching to Update Mode."
-      _log_info "Staging all changes for update..."
-      git add .
+      git add .;
       if git diff --staged --quiet; then
-          _log_info "No new changes detected. Everything is up-to-date."
+          _log_info "No new changes detected.";
       else
-          read -p "Enter commit message for this update: " COMMIT_MSG
-          COMMIT_MSG=${COMMIT_MSG:-"Update project files via gh-publish"}
-          git commit -m "$COMMIT_MSG"
-          _log_info "Pushing updates to remote repository..."
-          git push origin main
+          read -p "Enter commit message: " COMMIT_MSG
+          git commit -m "${COMMIT_MSG:-"Update via gh-publish"}"
+          _log_info "Pushing updates..."; git push origin main
       fi
   else
-      # --- PUBLISH MODE (for new projects) ---
-      _log_info "New project detected. Starting Publish Mode..."
+      _log_info "New project detected. Starting Publish Mode."
       DEFAULT_REPO_NAME=$(basename "$(pwd)")
-      read -p "Enter repository name (default: '$DEFAULT_REPO_NAME'): " REPO_NAME
+      read -p "Repo name (default: '$DEFAULT_REPO_NAME'): " REPO_NAME
       REPO_NAME=${REPO_NAME:-$DEFAULT_REPO_NAME}
-      read -p "Enter a short description: " REPO_DESC
-      read -p "Make repository private? (y/N): " IS_PRIVATE
+      read -p "Description: " REPO_DESC
+      read -p "Private? (y/N): " IS_PRIVATE
       PRIVATE_FLAG="false"; [[ "$IS_PRIVATE" =~ ^[Yy]$ ]] && PRIVATE_FLAG="true"
-      
-      [ ! -f "README.md" ] && { echo "# $REPO_NAME" > README.md; echo "" >> README.md; echo "$REPO_DESC" >> README.md; }
+      [ ! -f "README.md" ] && { echo "# $REPO_NAME" > README.md; echo "$REPO_DESC" >> README.md; }
       [ ! -f ".gitignore" ] && { for p in "${IGNORE_PATTERNS[@]}"; do echo "$p" >> .gitignore; done; }
-
-      _log_info "Creating remote repository '$REPO_NAME' on GitHub..."
+      _log_info "Creating remote repo '$REPO_NAME'..."
       USERNAME=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/user | jq -r '.login')
       API_URL="https://api.github.com/user/repos"
-      JSON_PAYLOAD=$(jq -n --arg name "$REPO_NAME" --arg desc "$REPO_DESC" --argjson private "$PRIVATE_FLAG" '{name: $name, description: $desc, private: $private}')
+      JSON_PAYLOAD=$(jq -n --arg n "$REPO_NAME" --arg d "$REPO_DESC" --argjson p "$PRIVATE_FLAG" '{name:$n, description:$d, private:$p}')
       RESPONSE=$(curl -s -L -X POST -H "Authorization: Bearer $GITHUB_TOKEN" "$API_URL" -d "$JSON_PAYLOAD")
       CLONE_URL=$(echo "$RESPONSE" | jq -r '.clone_url')
-      if [ "$CLONE_URL" == "null" ]; then _log_error "Failed to create repository: $(echo "$RESPONSE" | jq -r '.errors[0].message')"; fi
-      _log_success "Remote repository created successfully."
-      
-      _log_info "Performing initial push..."
-      git init &>/dev/null; git add .; git commit -m "Initial publish"; git branch -M main; git remote add origin "$CLONE_URL"; git push -u origin main
+      [ "$CLONE_URL" == "null" ] && _log_error "Repo creation failed: $(echo "$RESPONSE" | jq -r '.errors[0].message')"
+      _log_success "Remote repo created."
+      _log_info "Initial push..."; git init &>/dev/null; git add .; git commit -m "Initial publish"; git branch -M main; git remote add origin "$CLONE_URL"; git push -u origin main
   fi
-
-  if [ $? -eq 0 ]; then
-    echo "🎉 Success! Your project is now on GitHub."
-  else
-    _log_error "An error occurred during the git operation."
-  fi
+  [ $? -eq 0 ] && echo "🎉 Success! Project is on GitHub." || _log_error "Git operation failed."
 }
 
-# --- Main Argument Parsing & Mode Selection ---
-
-if [[ "$1" == "--setup" ]]; then
-  setup_token
-  exit 0
-fi
-
-# Check for token after setup check
-if [ ! -f "$CONFIG_FILE" ]; then
-  _log_error "Token not found. Run 'gh-publish --setup' first."
-fi
+# --- Main Argument Parsing & Mode Selection (FIXED) ---
+case "$1" in
+  -h|--help) show_help; exit 0;;
+  --setup) setup_token; exit 0;;
+  --from-path)
+    read -p "Enter the full path of the project to import and publish: " SOURCE_PATH
+    [ ! -d "$SOURCE_PATH" ] && _log_error "Source path '$SOURCE_PATH' is not a valid directory."
+    PROJECT_NAME=$(basename "$SOURCE_PATH")
+    TEMP_DIR="$HOME/gh_publish_temp/$PROJECT_NAME"
+    _log_info "Importing project from '$SOURCE_PATH' to '$TEMP_DIR'..."
+    rm -rf "$TEMP_DIR"; mkdir -p "$TEMP_DIR"
+    eval "rsync -a --progress \"$SOURCE_PATH/\" \"$TEMP_DIR/\" $RSYNC_EXCLUDES"
+    _log_success "Project imported."
+    run_publish_engine "$TEMP_DIR"
+    exit 0
+    ;;
+esac
+if [ ! -f "$CONFIG_FILE" ]; then _log_error "Token not found. Run 'gh-publish --setup' first."; fi
 source "$CONFIG_FILE"
-
-# --- Mode: --from-path ---
-if [[ "$1" == "--from-path" ]]; then
-  read -p "Enter the full path of the project to import and publish: " SOURCE_PATH
-  if [ ! -d "$SOURCE_PATH" ]; then _log_error "Source path '$SOURCE_PATH' is not a valid directory."; fi
-  
-  PROJECT_NAME=$(basename "$SOURCE_PATH")
-  TEMP_DIR="$HOME/gh_publish_temp/$PROJECT_NAME"
-  _log_info "Importing project from '$SOURCE_PATH' to a temporary directory..."
-  rm -rf "$TEMP_DIR" # Clean up previous temp data
-  mkdir -p "$TEMP_DIR"
-  eval "rsync -a --progress \"$SOURCE_PATH/\" \"$TEMP_DIR/\" $RSYNC_EXCLUDES"
-  _log_success "Project imported successfully."
-  
-  run_publish_engine "$TEMP_DIR"
-  exit 0
-fi
-
-# --- Mode: --name (interactive) ---
-if [[ "$1" == "--name" ]]; then
-  read -p "Enter the name of the project/file to find and publish: " TARGET_NAME
-  # This mode is complex, for now we will just pass the name to the next stage
-  set -- "$TARGET_NAME" # Replace arguments with just the name
-fi
-
-# --- Mode: Argument Provided (direct name) or Default (current dir) ---
 if [ -n "$1" ]; then
-  # --- Direct Name Mode ---
   TARGET_NAME="$1"
   _log_info "Searching for '$TARGET_NAME'..."
   SEARCH_PATHS=("$HOME/projects" "$HOME/bin" "$HOME/storage/shared")
   FOUND_PATH=""
-  for path in "${SEARCH_PATHS[@]}"; do
-    if [ -e "$path/$TARGET_NAME" ]; then
-      FOUND_PATH="$path/$TARGET_NAME"
-      break
-    fi
-  done
-  
-  if [ -z "$FOUND_PATH" ]; then _log_error "Could not find '$TARGET_NAME' in standard locations."; fi
+  for path in "${SEARCH_PATHS[@]}"; do [ -e "$path/$TARGET_NAME" ] && { FOUND_PATH="$path/$TARGET_NAME"; break; }; done
+  [ -z "$FOUND_PATH" ] && _log_error "Could not find '$TARGET_NAME' in standard locations."
   _log_success "Found at '$FOUND_PATH'."
-  
-  if [ -d "$FOUND_PATH" ]; then
-    run_publish_engine "$FOUND_PATH"
-  else # It's a file
-    _log_info "Target is a single file. Creating a temporary project for it..."
+  if [ -d "$FOUND_PATH" ]; then run_publish_engine "$FOUND_PATH";
+  else
     TEMP_DIR="$HOME/gh_publish_temp/$(basename "$FOUND_PATH")_proj"
-    rm -rf "$TEMP_DIR"; mkdir -p "$TEMP_DIR"
-    cp "$FOUND_PATH" "$TEMP_DIR/"
+    _log_info "Target is a single file. Creating temporary project in '$TEMP_DIR'..."
+    rm -rf "$TEMP_DIR"; mkdir -p "$TEMP_DIR"; cp "$FOUND_PATH" "$TEMP_DIR/"
     run_publish_engine "$TEMP_DIR"
   fi
 else
-  # --- Default Mode (current directory) ---
   run_publish_engine "$(pwd)"
 fi
