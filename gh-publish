@@ -1,0 +1,86 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+# --- gh-publish: The Auto-Publisher Tool (v10.0 - Comprehensive Update) ---
+
+CONFIG_FILE="$HOME/.gh-publish.conf"
+
+# --- Setup Function ---
+setup_token() {
+  echo "--- GitHub Personal Access Token Setup ---"
+  read -p "Enter your GitHub Token (with 'repo' and 'workflow' scopes): " GITHUB_TOKEN
+  echo "GITHUB_TOKEN='$GITHUB_TOKEN'" > "$CONFIG_FILE"
+  chmod 600 "$CONFIG_FILE"
+  echo "✅ Token saved securely."
+}
+
+# --- Main Logic ---
+
+if [[ "$1" == "--setup" ]]; then
+  setup_token
+  exit 0
+fi
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "❌ Token not found. Run 'gh-publish --setup' first."
+  exit 1
+fi
+source "$CONFIG_FILE"
+
+# --- Check if project is already a git repo with a remote ---
+if [ -d ".git" ] && git remote -v | grep -q "origin.*push"; then
+    # --- UPDATE MODE ---
+    echo "🔄 Project already published. Switching to Update Mode."
+    
+    echo "📲 Staging all changes for update..."
+    git add .
+
+    if git diff --staged --quiet; then
+        echo "ℹ️ No new changes detected. Everything is up-to-date."
+    else
+        read -p "Enter commit message for this update: " COMMIT_MSG
+        COMMIT_MSG=${COMMIT_MSG:-"Update project files via gh-publish"}
+        git commit -m "$COMMIT_MSG"
+        echo "Pushing updates to remote repository..."
+        git push origin main
+    fi
+
+else
+    # --- PUBLISH MODE (for new projects) ---
+    echo "🚀 New project detected. Starting Publish Mode..."
+    DEFAULT_REPO_NAME=$(basename "$(pwd)")
+    read -p "Enter repository name (default: '$DEFAULT_REPO_NAME'): " REPO_NAME
+    REPO_NAME=${REPO_NAME:-$DEFAULT_REPO_NAME}
+    read -p "Enter a short description: " REPO_DESC
+    read -p "Make repository private? (y/N): " IS_PRIVATE
+    PRIVATE_FLAG="false"; [[ "$IS_PRIVATE" =~ ^[Yy]$ ]] && PRIVATE_FLAG="true"
+    
+    if [ ! -f "README.md" ]; then
+      echo "# $REPO_NAME" > README.md
+      echo "" >> README.md
+      echo "$REPO_DESC" >> README.md
+    fi
+
+    echo "🌍 Creating remote repository '$REPO_NAME' on GitHub..."
+    USERNAME=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/user | jq -r '.login')
+    API_URL="https://api.github.com/user/repos"
+    JSON_PAYLOAD=$(jq -n --arg name "$REPO_NAME" --arg desc "$REPO_DESC" --argjson private "$PRIVATE_FLAG" '{name: $name, description: $desc, private: $private}')
+    RESPONSE=$(curl -s -L -X POST -H "Authorization: Bearer $GITHUB_TOKEN" "$API_URL" -d "$JSON_PAYLOAD")
+    CLONE_URL=$(echo "$RESPONSE" | jq -r '.clone_url')
+    if [ "$CLONE_URL" == "null" ]; then echo "❌ Failed to create repository: $(echo "$RESPONSE" | jq -r '.errors[0].message')"; exit 1; fi
+    echo "✅ Remote repository created successfully."
+    
+    echo "📲 Performing initial push..."
+    git init &>/dev/null
+    git add .
+    git commit -m "Initial publish"
+    git branch -M main
+    git remote add origin "$CLONE_URL"
+    git push -u origin main
+fi
+
+# --- Final Success Message ---
+if [ $? -eq 0 ]; then
+  echo "🎉 Success! Your project is now on GitHub."
+else
+  echo "❌ An error occurred during the git operation."
+fi
